@@ -1,0 +1,13 @@
+Package: fusecow
+Priority: extra
+Section: utils
+Installed-Size: 8
+Maintainer: Vitaly "_Vi" Shukela <vi0oss@gmail.com>
+Architecture: i386
+Depends: fuse-utils,libfuse2,libc6
+Description: Copy-on-write using FUSE and sparse files
+ Limitations: slow, cannot grow files
+ Main usages: 
+    mount reiserfs in really-read-only mode.
+    Safer whole-HDD-access for virtual machines
+Homepage: http://github.com/vi/fusecow
