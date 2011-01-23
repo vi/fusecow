@@ -1,1 +1,43 @@
-Simple single-file FUSE implementation of copy-on-write
+Simple single-file FUSE implementation of copy-on-write using sparse files as storage to copyup
+
+Example session:
+# mount | grep "on / "
+/dev/sda8 on / type reiserfs (rw,user_xattr,usrquota,acl)
+# touch mountpoint_file
+# ./fusecow /dev/sda8 mountpoint_file write_file
+# reiserfsck mountpoint_file
+Replaying journal: Trans replayed: mountid 636, transid 14679519, desc 901, len 2, commit 904, next trans offset 887
+Trans replayed: mountid 636, transid 14679520, desc 905, len 1, commit 907, next trans offset 890
+...
+
+# ls -lh
+-rw------- 1 root disk  30G Jan 22 17:01 mountpoint_file
+-rwxr-xr-x 1 root root  29G Jan 23 06:01 write_file
+-rwxr-xr-x 1 root root 472K Jan 23 06:01 write_file.map
+
+# du -sh *
+32M	mountpoint_file
+31M	write_file
+281K	write_file.map
+
+# mkdir mnt && mount -o loop mountpoint_file mnt
+# dd if=/dev/urandom of=mnt/usr/local/etc/qqqqq bs=1M count=32
+
+# umount mnt
+# fusermount -u mountpoint_file
+# du -sh *
+0	mountpoint_file
+65M	write_file
+289K	write_file.map
+
+# ls /usr/local/etc/qqqqq
+ls: cannot access /usr/local/etc/qqqqq: No such file or directory
+
+# ./fusecow /dev/sda8 mountpoint_file write_file
+# mount -o loop mountpoint_file mnt
+# ls -lh mnt/usr/local/etc/qqqqq
+-rw-r--r-- 1 root root 32M Jan 23 06:05 mnt/usr/local/etc/qqqqq
+
+Limitations:
+1. Slow
+2. Cannot grow files yet

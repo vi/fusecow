@@ -22,9 +22,25 @@
  * gcc -O2 `pkg-config fuse --cflags --libs` fusecow.c -o fusecow
  */
 
+/* map file format:
+	  signature:               filesize:
+00000000  66 75 73 65 63 6f 77 0a  00 00 40 06 00 00 00 00  |fusecow...@.....|
+	  block_size:              reserved:
+00000010  00 20 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |. ..............|
+	  actual map data begins here:
+00000020  00 00 00 00 00 00 00 00  00 00 40 00 00 00 8C 01  |................|
+	     ^   			 ^
+	     00 - all 8 blocks unchanged;40 == 0b01000000 means one block was overridden here
+
+ */
+
 #define FUSE_USE_VERSION 26
 #define _XOPEN_SOURCE 500
+#define _FILE_OFFSET_BITS 64 
+#define _LARGEFILE64_SOURCE
 
+#include <sys/types.h>
+#include <unistd.h>
 #include <fuse.h>
 #include <time.h>
 #include <stdlib.h>
@@ -43,7 +59,7 @@ char* mem_map;
 size_t mem_map_size;
 
 int block_size;
-off_t st_size;
+off64_t st_size;
 
 char* copyup_buffer;
 
@@ -62,7 +78,7 @@ char map_get(long long int block) {
     if(mem_map!=MAP_FAILED) {
 	c = mem_map[offset];
     } else {
-        pread(fd_map, &c, 1, offset);
+        pread64(fd_map, &c, 1, offset);
     }
     return (c & (1<<(block%8)))?1:0;
 }
@@ -78,9 +94,8 @@ void map_set(long long int block, char val) {
     char c;
     if(mem_map!=MAP_FAILED) {
 	c = mem_map[offset];
-	mem_map[offset]=c;
     } else {
-        pread(fd_map, &c, 1, offset);
+        pread64(fd_map, &c, 1, offset);
     }
 
     char mask = 1 << (block%8);
@@ -92,7 +107,7 @@ void map_set(long long int block, char val) {
     if(mem_map!=MAP_FAILED) {
 	mem_map[offset]=c;
     } else {
-        pwrite(fd_map, &c, 1, offset);
+        pwrite64(fd_map, &c, 1, offset);
     }
 
 }
@@ -118,13 +133,14 @@ static int fusecow_getattr(const char *path, struct stat *stbuf)
     stbuf->st_size = st_size;
     stbuf->st_blocks += s_write.st_blocks + s_map.st_blocks;
     stbuf->st_blksize = block_size;
+    stbuf->st_mode = 0100600;
 
     //stbuf->st_*time = ?
     
     return 0;
 }
 
-static int fusecow_truncate(const char *path, off_t size)
+static int fusecow_truncate(const char *path, off64_t size)
 {
     (void) size;
 
@@ -137,7 +153,7 @@ static int fusecow_truncate(const char *path, off_t size)
     mem_map_size = get_map_size();
     ftruncate(fd_map, mem_map_size);
 
-    pwrite(fd_map, &st_size, sizeof st_size, 8);
+    pwrite64(fd_map, &st_size, sizeof st_size, 8);
     
     mem_map = mmap(NULL, mem_map_size , PROT_READ|PROT_WRITE, MAP_SHARED, fd_map, 0);
 
@@ -161,7 +177,7 @@ static int fusecow_open(const char *path, struct fuse_file_info *fi)
 }
 
 static int fusecow_read(const char *path, char *buf, size_t size,
-                     off_t offset, struct fuse_file_info *fi)
+                     off64_t offset, struct fuse_file_info *fi)
 {
     int res;
 
@@ -171,9 +187,9 @@ static int fusecow_read(const char *path, char *buf, size_t size,
     }
 
     if(map_get(block_number)) {
-	res=pread(fd_write, buf, size, offset);
+	res=pread64(fd_write, buf, size, offset);
     } else {
-	res=pread(fd, buf, size, offset);
+	res=pread64(fd, buf, size, offset);
     }
 
     if (res == -1)
@@ -184,7 +200,7 @@ static int fusecow_read(const char *path, char *buf, size_t size,
 }
 
 static int fusecow_read_safe(const char *path, char *buf, size_t size,
-                     off_t offset, struct fuse_file_info *fi)
+                     off64_t offset, struct fuse_file_info *fi)
 {
     int res=0;
 
@@ -211,22 +227,22 @@ static int fusecow_read_safe(const char *path, char *buf, size_t size,
 }
 
 static int fusecow_write(const char *path, const char *buf, size_t size,
-                     off_t offset, struct fuse_file_info *fi)
+                     off64_t offset, struct fuse_file_info *fi)
 {
     (void) fi;
 
     long long int block_number = offset / block_size;
     if(offset + size > (block_number+1)*block_size) {
-	size = (block_number+1)*block_size - offset; // write only one block
+	size = (block_number+1)*block_size - offset; // write only one block. write_safe will care
     }
 
     int res;
     if(map_get(block_number)) {
-	res=pwrite(fd_write, buf, size, offset);
+	res=pwrite64(fd_write, buf, size, offset);
     } else {
 	int remaining = block_size;
 	while(remaining) {
-	    res=pread(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+	    res=pread64(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
 	    if(res==0) {
 		memset(copyup_buffer + block_size - remaining, 0, remaining);
 		break;
@@ -243,7 +259,7 @@ static int fusecow_write(const char *path, const char *buf, size_t size,
 	remaining=block_size;
 	while(remaining) {
 	    fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
-	    res=pwrite(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+	    res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
 	    if(res==-1) {
 		if(errno==EINTR) continue;
 		return -errno;
@@ -265,7 +281,7 @@ static int fusecow_write(const char *path, const char *buf, size_t size,
 
 
 static int fusecow_write_safe(const char *path, const char *buf, size_t size,
-                     off_t offset, struct fuse_file_info *fi)
+                     off64_t offset, struct fuse_file_info *fi)
 {
     int res=0;
     if(strcmp(path, "/") != 0)
@@ -287,11 +303,13 @@ static int fusecow_write_safe(const char *path, const char *buf, size_t size,
     }
     
     if(offset+res > st_size) {
+	fprintf(stderr, "Growing files is known to fail\n");
+	return -ENOSPC;
 	st_size = offset+res;
 	if(mem_map!=MAP_FAILED) {
 	    memcpy(mem_map+8, &st_size, sizeof st_size);
 	} else {
-	    pwrite(fd_map, &st_size, sizeof st_size, 8);
+	    pwrite64(fd_map, &st_size, sizeof st_size, 8);
 	}
     }
 
@@ -339,8 +357,6 @@ int main(int argc, char *argv[])
     char* argv2[argc-1+2];  // File name removed, "-o nonempty,direct_io" added
     int our_arguments_count=4; /* argv[0], source file, storage file and mount point */
 
-    char* source_file;
-    
     block_size=8192;
     fd=0;
     fd_write=0;
@@ -348,10 +364,6 @@ int main(int argc, char *argv[])
     mem_map=MAP_FAILED;
 
     int block_size_overridden=0;
-
-    if (sizeof(off_t)<8) {
-	fprintf(stderr, "Warning: offsets are only %d bytes long\n", sizeof(off_t));
-    }
 
     if(argc<3){
 	fprintf(stderr,"fusecow alpha version. Copy-on-write block device using FUSE and sparse files. Created by _Vi.\n");
@@ -381,13 +393,13 @@ int main(int argc, char *argv[])
 		break;
 	    }
 	}
-	fd=open(argv[1],O_RDONLY);
+	fd=open64(argv[1],O_RDONLY);
 	if(fd<0){
 	    fprintf(stderr, "Unable to open read file \"%s\"\n", argv[1]);
 	    perror("open");
 	    return 1;
 	}
-	fd_write=open(argv[3], O_RDWR|O_CREAT, 0777);
+	fd_write=open64(argv[3], O_RDWR|O_CREAT, 0777);
 	if(fd_write<0){
 	    fprintf(stderr, "Unable to open write file \"%s\"\n", argv[3]);
 	    perror("open");
@@ -402,20 +414,21 @@ int main(int argc, char *argv[])
     
 	char signature[8];
 	signature[0]=0;
-	pread(fd_map, &signature, sizeof signature, 0);
+	pread64(fd_map, &signature, sizeof signature, 0);
 	signature[7]=0;
 	if (strcmp(signature, "fusecow")) {
+	    // No signature:
 	    struct stat stbuf;
 	    fstat(fd, &stbuf);
-	    st_size = stbuf.st_size;
-	    pwrite(fd_map, "fusecow\n", 8, 0);
-	    pwrite(fd_map, &st_size, sizeof st_size, 8);
-	    pwrite(fd_map, &block_size, sizeof block_size, 16);
+	    stbuf.st_size = st_size = (off64_t)lseek64(fd, (off64_t)0, SEEK_END);
+	    pwrite64(fd_map, "fusecow\n", 8, 0);
+	    pwrite64(fd_map, &st_size, sizeof st_size, 8);
+	    pwrite64(fd_map, &block_size, sizeof block_size, 16);
 	    // Actual data begins at offset 32
 	} else {
-	    pread(fd_map, &st_size, sizeof st_size, 8);
+	    pread64(fd_map, &st_size, sizeof st_size, 8);
 	    int blocksize;
-	    pread(fd_map, &blocksize, sizeof block_size, 16);
+	    pread64(fd_map, &blocksize, sizeof block_size, 16);
 	    if(block_size_overridden && blocksize!=block_size) {
 		fprintf(stderr, "Your block size %d and block size %d saved in \"%s\" is not the same\nI will use saved block size anyway\n",
 			block_size, blocksize, mapfile);
