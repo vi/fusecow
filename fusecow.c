@@ -131,7 +131,7 @@ static int fusecow_getattr(const char *path, struct stat *stbuf)
     fstat(fd_map, &s_map);
 
     stbuf->st_size = st_size;
-    stbuf->st_blocks += s_write.st_blocks + s_map.st_blocks;
+    stbuf->st_blocks = st_size/512;
     stbuf->st_blksize = block_size;
     stbuf->st_mode = 0100600;
 
