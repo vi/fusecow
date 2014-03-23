@@ -23,5 +23,7 @@ deb: fusecow VERSION control
 	cp fusecow deb/usr/bin/
 	strip deb/usr/bin/fusecow
 	fakeroot dpkg-deb -b deb fusecow-`cat VERSION`.deb
-	rm -Rf deb                   
+	rm -Rf deb
 
+clean:
+	rm -f fusecow
