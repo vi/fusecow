@@ -1,6 +1,6 @@
 all: fusecow
 
-fusecow: fusecow.c Makefile
+fusecow: fusecow.c makefile
 	gcc -g3 -O2 -Wall fusecow.c -o fusecow `pkg-config fuse --cflags --libs`
 
 prefix=/usr/local
