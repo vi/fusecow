@@ -5,10 +5,13 @@ all: fusecow
 fusecow: fusecow.c makefile
 	gcc -g3 -O2 -Wall fusecow.c -o fusecow `pkg-config fuse --cflags --libs`
 
-VERSION: .git
-	git describe --dirty > VERSION || echo unknown > VERSION
+VERSION: .git/HEAD
+	git describe --dirty | sed 's!^v!!' > VERSION || echo 0.0 > VERSION
 
 .PHONY: test deb
+
+deb: VERSION
+	(cd deb && ./makedeb.sh)
 
 deb_simple: fusecow VERSION deb_simple/control
 	rm -Rf deb
