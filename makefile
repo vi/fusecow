@@ -1,3 +1,5 @@
+# this is a makefile for building without cmake
+
 all: fusecow
 
 fusecow: fusecow.c makefile
@@ -13,11 +15,11 @@ VERSION: .git
 
 .PHONY: test deb
 
-deb: fusecow VERSION control
+deb_simple: fusecow VERSION deb_simple/control
 	rm -Rf deb
 	mkdir -p deb/usr/bin/
 	mkdir -p deb/DEBIAN
-	cp control deb/DEBIAN/control
+	cp deb_simple/control deb/DEBIAN/control
 	echo Version: `cat VERSION` >> deb/DEBIAN/control
 	touch deb/DEBIAN/conffiles
 	cp fusecow deb/usr/bin/
