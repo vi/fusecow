@@ -1,0 +1,12 @@
+Source: fusecow
+Section: utils
+Priority: extra
+Maintainer: Vitaly "_Vi" Shukela <vi0oss@gmail.com>
+Standards-Version: 3.9.3
+Homepage: https://github.com/vi/fusecow
+Build-Depends: libfuse-dev, pkg-config, debhelper
+
+Package: fusecow
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libc6, libfuse2
+Description: Simple single-file copy-on-write using FUSE
