@@ -58,6 +58,8 @@ int fd_map;
 char* mem_map;
 size_t mem_map_size;
 
+int copyup_on_reads = 0;
+
 int block_size;
 off64_t st_size;
 
@@ -188,8 +190,42 @@ static int fusecow_read(const char *path, char *buf, size_t size,
 
     if(map_get(block_number)) {
         res=pread64(fd_write, buf, size, offset);
-    } else {
+    } else
+    if (!copyup_on_reads) {
         res=pread64(fd, buf, size, offset);
+    } else {
+        // not found in map and need copyup on reads
+        
+        int remaining = block_size;
+        while(remaining) {
+            res=pread64(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+            if(res==0) {
+                memset(copyup_buffer + block_size - remaining, 0, remaining);
+                break;
+            }
+            if(res==-1) {
+                if(errno==EINTR) continue;
+                return -errno;
+            }
+            remaining -= res;
+        }
+
+        memcpy(buf, copyup_buffer + offset%block_size, size);
+
+        remaining=block_size;
+        while(remaining) {
+            fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
+            res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+            if(res==-1) {
+                if(errno==EINTR) continue;
+                return -errno;
+            }
+            remaining -= res;
+        }
+
+        map_set(block_number, 1);
+
+        res = size;
     }
 
     if (res == -1)
@@ -367,10 +403,11 @@ int main(int argc, char *argv[])
 
     if(argc<3){
         fprintf(stderr,"fusecow alpha version. Copy-on-write block device using FUSE and sparse files. Created by _Vi.\n");
-        fprintf(stderr,"Usage: %s read_file mountpoint_file write_file [-M write_file.map] [-B blocksize] [FUSE_options]\n",argv[0]);
+        fprintf(stderr,"Usage: %s read_file mountpoint_file write_file [-M write_file.map] [-B blocksize] [-R] [FUSE_options]\n",argv[0]);
         fprintf(stderr,"Examples:\n");
         fprintf(stderr,"    fusecow source mountpoint store\n");
         fprintf(stderr,"Remember to \"touch\" your mountpoints, not \"mkdir\" them.\n");
+        fprintf(stderr,"    -R flag causes to copyup data on reads, not just on writes\n");
         return 1;
     }
 
@@ -379,6 +416,10 @@ int main(int argc, char *argv[])
         sprintf(mapfile_buff, "%s.map", argv[3]);
         const char *mapfile = mapfile_buff;
         for(;argv[our_arguments_count];) {
+            if(!strcmp(argv[our_arguments_count], "-R")) {
+                ++our_arguments_count;
+                copyup_on_reads = 1;
+            } else
             if(!strcmp(argv[our_arguments_count], "-B")) {
                 ++our_arguments_count;
                 sscanf(argv[our_arguments_count], "%i", &block_size);
