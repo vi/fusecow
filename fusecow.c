@@ -178,6 +178,37 @@ static int fusecow_open(const char *path, struct fuse_file_info *fi)
     return 0;
 }
 
+static int load_block_into_copyup_buffer(int block_number) {
+    int remaining = block_size;
+    while(remaining) {
+        int res=pread64(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+        if(res==0) {
+            memset(copyup_buffer + block_size - remaining, 0, remaining);
+            break;
+        }
+        if(res==-1) {
+            if(errno==EINTR) continue;
+            return -errno;
+        }
+        remaining -= res;
+    }
+    return 0;
+}
+
+static int save_block_from_copyup_buffer(int block_number) {
+    int remaining=block_size;
+    while(remaining) {
+        //fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
+        int res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
+        if(res==-1) {
+            if(errno==EINTR) continue;
+            return -errno;
+        }
+        remaining -= res;
+    }
+    return 0;
+}
+
 static int fusecow_read(const char *path, char *buf, size_t size,
                      off64_t offset, struct fuse_file_info *fi)
 {
@@ -195,33 +226,14 @@ static int fusecow_read(const char *path, char *buf, size_t size,
         res=pread64(fd, buf, size, offset);
     } else {
         // not found in map and need copyup on reads
-        
-        int remaining = block_size;
-        while(remaining) {
-            res=pread64(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
-            if(res==0) {
-                memset(copyup_buffer + block_size - remaining, 0, remaining);
-                break;
-            }
-            if(res==-1) {
-                if(errno==EINTR) continue;
-                return -errno;
-            }
-            remaining -= res;
-        }
+
+        res = load_block_into_copyup_buffer(block_number);
+        if (res<0) return res;
 
         memcpy(buf, copyup_buffer + offset%block_size, size);
 
-        remaining=block_size;
-        while(remaining) {
-            //fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
-            res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
-            if(res==-1) {
-                if(errno==EINTR) continue;
-                return -errno;
-            }
-            remaining -= res;
-        }
+        res = save_block_from_copyup_buffer(block_number);
+        if (res<0) return res;
 
         map_set(block_number, 1);
 
@@ -276,32 +288,13 @@ static int fusecow_write(const char *path, const char *buf, size_t size,
     if(map_get(block_number)) {
         res=pwrite64(fd_write, buf, size, offset);
     } else {
-        int remaining = block_size;
-        while(remaining) {
-            res=pread64(fd, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
-            if(res==0) {
-                memset(copyup_buffer + block_size - remaining, 0, remaining);
-                break;
-            }
-            if(res==-1) {
-                if(errno==EINTR) continue;
-                return -errno;
-            }
-            remaining -= res;
-        }
+        res = load_block_into_copyup_buffer(block_number);
+        if (res<0) return res;
 
         memcpy(copyup_buffer+offset%block_size, buf, size);
 
-        remaining=block_size;
-        while(remaining) {
-            //fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
-            res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
-            if(res==-1) {
-                if(errno==EINTR) continue;
-                return -errno;
-            }
-            remaining -= res;
-        }
+        res = save_block_from_copyup_buffer(block_number);
+        if (res<0) return res;
 
         map_set(block_number, 1);
 
