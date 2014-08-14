@@ -214,7 +214,7 @@ static int fusecow_read(const char *path, char *buf, size_t size,
 
         remaining=block_size;
         while(remaining) {
-            fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
+            //fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
             res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
             if(res==-1) {
                 if(errno==EINTR) continue;
@@ -294,7 +294,7 @@ static int fusecow_write(const char *path, const char *buf, size_t size,
 
         remaining=block_size;
         while(remaining) {
-            fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
+            //fprintf(stderr, "Performing write at offset %lld\n", block_number*block_size);
             res=pwrite64(fd_write, copyup_buffer + block_size - remaining, remaining, block_number*block_size);
             if(res==-1) {
                 if(errno==EINTR) continue;
